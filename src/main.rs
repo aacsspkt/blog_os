@@ -4,7 +4,8 @@
 #![test_runner(blog_os::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use blog_os::println;
+use blog_os::{memory::{self, BootInfoFrameAllocator, translate_addr}, println};
+use x86_64::structures::paging::{Page, PageTable, Translate};
 use core::panic::PanicInfo;
 use bootloader::{BootInfo, entry_point};
 
@@ -12,20 +13,28 @@ entry_point!(kernel_main);
 
 #[unsafe(no_mangle)]
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
-    use blog_os::memory::active_level_4_table;
     use x86_64::VirtAddr;
     
     println!("Hello World{}", "!");
     blog_os::init();
 
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-    let l4_table = unsafe { active_level_4_table(phys_mem_offset) };
+    let mut mapper = unsafe { memory::init(phys_mem_offset) };
+    let mut frame_allocator = unsafe {
+        BootInfoFrameAllocator::init(&boot_info.memory_map)
+    };
+
+    // map an unused page
+    let page = Page::containing_address(VirtAddr::new(0xdeadbeaf000));
+    memory::create_example_mapping(page, &mut mapper, &mut frame_allocator);
     
-    for (i, entry) in l4_table.iter().enumerate() {
-        if !entry.is_unused() {
-            println!("L4 Entry {}: {:?}", i, entry);
-        }
-    }
+    // write the string `New!` to the screen through the new mapping
+    let page_ptr: *mut u64 = page.start_address().as_mut_ptr();
+    unsafe { page_ptr.offset(400).write_volatile(0x_f021_f077_f065_f04e)};
+
+    // let mut frame_allocator = unsafe {
+    //     BootInfoFrameAllocator::init(&boot_info.memory_map)
+    // };
 
     #[cfg(test)]
     test_main();
